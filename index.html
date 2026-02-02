@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Region Test</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+
+  <style>
+    body { margin: 0; }
+    #map { height: 100vh; width: 100vw; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const map = L.map("map").setView([47.93, -97.03], 12);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 19
+    }).addTo(map);
+
+    fetch("./index.json")
+      .then(r => r.json())
+      .then(geojson => {
+        const layer = L.geoJSON(geojson, {
+          style: {
+            color: "#0066cc",
+            weight: 2,
+            fillOpacity: 0.3
+          }
+        }).addTo(map);
+
+        map.fitBounds(layer.getBounds(), { padding: [20, 20] });
+      })
+      .catch(err => {
+        console.error(err);
+        alert("Failed to load index.json");
+      });
+  </script>
+</body>
+</html>
