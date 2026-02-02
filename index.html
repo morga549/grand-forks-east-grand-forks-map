@@ -27,7 +27,7 @@
       maxZoom: 19
     }).addTo(map);
 
-    fetch("./index.json")
+    fetch("./regions.json")
       .then(r => r.json())
       .then(geojson => {
         const layer = L.geoJSON(geojson, {
