@@ -175,10 +175,6 @@
     const GEOJSON_URL = "./regions.geojson";
     const DEFAULT_VIEW = { lat: 47.91, lon: -97.03, zoom: 14 };
 
-    const STYLE_DEFAULT  = { weight: 2, fillOpacity: 0.20 };
-    const STYLE_HOVER    = { weight: 3, fillOpacity: 0.32 };
-    const STYLE_SELECTED = { weight: 4, fillOpacity: 0.45 };
-
     let geoLayer = null;
     let regionsGeoJSON = null;
     let selectedLayer = null;
@@ -197,6 +193,57 @@
     const infoEl = document.getElementById("info");
     const statusEl = document.getElementById("status");
     const sectionTitleEl = document.getElementById("sectionTitle");
+
+    function hashToColor(str) {
+    // Simple deterministic hash → HSL color
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+      
+        const hue = Math.abs(hash) % 360;
+        return `hsl(${hue}, 65%, 55%)`;
+    }
+
+    function getFeatureColor(feature) {
+      // Prefer a stable ID; fall back to name
+      const key =
+        feature?.properties?.areaId ||
+        feature?.properties?.name ||
+        "default";
+    
+      return hashToColor(key);
+    }
+
+    function baseStyle(feature) {
+      const color = getFeatureColor(feature);
+      return {
+        color,           // border
+        fillColor: color,
+        weight: 2,
+        fillOpacity: 0.25
+      };
+    }
+    
+    function hoverStyle(feature) {
+      const color = getFeatureColor(feature);
+      return {
+        color,
+        fillColor: color,
+        weight: 3,
+        fillOpacity: 0.35
+      };
+    }
+    
+    function selectedStyle(feature) {
+      const color = getFeatureColor(feature);
+      return {
+        color,
+        fillColor: color,
+        weight: 4,
+        fillOpacity: 0.50
+      };
+    }
 
     function setStatus(msg) {
       statusEl.textContent = msg || "";
@@ -235,37 +282,51 @@
     }
 
     function clearSelection() {
-      if (selectedLayer) selectedLayer.setStyle(STYLE_DEFAULT);
+      if (selectedLayer) {
+        selectedLayer.setStyle(baseStyle(selectedLayer.feature));
+      }
       selectedLayer = null;
       setSectionTitle("Contact");
     }
 
+
     function setSelected(layer) {
       if (selectedLayer && selectedLayer !== layer) {
-        selectedLayer.setStyle(STYLE_DEFAULT);
+        selectedLayer.setStyle(baseStyle(selectedLayer.feature));
       }
+    
       selectedLayer = layer;
-      selectedLayer.setStyle(STYLE_SELECTED);
+      selectedLayer.setStyle(selectedStyle(layer.feature));
       selectedLayer.bringToFront();
-
+    
       const props = layer.feature?.properties || {};
       setSectionTitle(props.name);
       renderInfo(props);
     }
+
 
     function styleFn() {
       return STYLE_DEFAULT;
     }
 
     function onEachFeature(feature, layer) {
+      layer.setStyle(baseStyle(feature));
+    
       layer.on("mouseover", () => {
-        if (layer !== selectedLayer) layer.setStyle(STYLE_HOVER);
+        if (layer !== selectedLayer) {
+          layer.setStyle(hoverStyle(feature));
+        }
       });
+    
       layer.on("mouseout", () => {
-        if (layer !== selectedLayer) layer.setStyle(STYLE_DEFAULT);
+        if (layer !== selectedLayer) {
+          layer.setStyle(baseStyle(feature));
+        }
       });
+    
       layer.on("click", () => setSelected(layer));
     }
+
 
     async function geocodeAddress(q) {
       const url = new URL("https://nominatim.openstreetmap.org/search");
@@ -326,9 +387,9 @@
       regionsGeoJSON = await resp.json();
 
       geoLayer = L.geoJSON(regionsGeoJSON, {
-        style: styleFn,
         onEachFeature
       }).addTo(map);
+
 
       map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] });
       setStatus("");
