@@ -2,48 +2,310 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Region Test</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Service Area Contact Map</title>
 
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
   <style>
-    body { margin: 0; }
-    #map { height: 100vh; width: 100vw; }
+    :root {
+      --panel-width: 380px;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --bg: #ffffff;
+    }
+
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: var(--text); }
+    #wrap { display: grid; grid-template-columns: var(--panel-width) 1fr; height: 100vh; }
+    #panel { padding: 14px 14px 10px; border-right: 1px solid var(--border); background: var(--bg); overflow: auto; }
+    #map { height: 100%; width: 100%; }
+
+    h1 { font-size: 18px; margin: 0 0 10px; }
+    h2 { font-size: 14px; margin: 16px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .row { display: flex; gap: 8px; }
+    input { flex: 1; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+    button { padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: #f9fafb; cursor: pointer; font-size: 14px; }
+    button:hover { background: #f3f4f6; }
+
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+    .card { border: 1px solid var(--border); border-radius: 12px; padding: 12px; }
+    .title { font-size: 16px; margin: 0 0 8px; }
+    .kv { margin: 6px 0; font-size: 14px; }
+    .kv b { font-weight: 600; }
+    .small { font-size: 12px; color: var(--muted); }
+
+    .status { font-size: 13px; color: var(--muted); margin-top: 10px; }
+
+    @media (max-width: 900px) {
+      #wrap { grid-template-columns: 1fr; grid-template-rows: 300px 1fr; }
+      #panel { border-right: 0; border-bottom: 1px solid var(--border); }
+    }
   </style>
 </head>
+
 <body>
-  <div id="map"></div>
+  <div id="wrap">
+    <div id="panel">
+      <h1>Find your area contact</h1>
+
+      <div class="row">
+        <input id="addr" placeholder="Enter your address (e.g., 123 4th St, Grand Forks, ND)" autocomplete="street-address" />
+        <button id="go" title="Search address">Search</button>
+      </div>
+      <div class="hint">
+        Tip: include the city/state. If you’re in East Grand Forks, add “MN”.
+      </div>
+
+      <h2>Contact</h2>
+      <div id="info" class="card">
+        <div class="small">Hover or click a region on the map, or search an address.</div>
+      </div>
+
+      <div id="status" class="status"></div>
+
+      <hr style="border:0;border-top:1px solid var(--border); margin: 12px 0;" />
+      <div class="small">
+        Map data © OpenStreetMap contributors.
+      </div>
+    </div>
+
+    <div id="map"></div>
+  </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
+
   <script>
-    const map = L.map("map").setView([47.93, -97.03], 12);
+    // ===== Config =====
+    const GEOJSON_URL = "./regions.geojson";
+
+    // Default view (roughly between GF and EGF)
+    const DEFAULT_VIEW = { lat: 47.93, lon: -97.03, zoom: 12 };
+
+    // Styles
+    const STYLE_DEFAULT  = { weight: 2, fillOpacity: 0.20 };
+    const STYLE_HOVER    = { weight: 3, fillOpacity: 0.32 };
+    const STYLE_SELECTED = { weight: 4, fillOpacity: 0.45 };
+
+    // ===== State =====
+    let geoLayer = null;
+    let regionsGeoJSON = null;
+    let selectedLayer = null;
+    let addressMarker = null;
+
+    // ===== Map init =====
+    const map = L.map("map").setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lon], DEFAULT_VIEW.zoom);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-      maxZoom: 19
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
     }).addTo(map);
 
-    fetch("./regions.json")
-      .then(r => r.json())
-      .then(geojson => {
-        const layer = L.geoJSON(geojson, {
-          style: {
-            color: "#0066cc",
-            weight: 2,
-            fillOpacity: 0.3
-          }
-        }).addTo(map);
+    // ===== UI helpers =====
+    const infoEl = document.getElementById("info");
+    const statusEl = document.getElementById("status");
 
-        map.fitBounds(layer.getBounds(), { padding: [20, 20] });
-      })
-      .catch(err => {
-        console.error(err);
-        alert("Failed to load regions.json");
+    function setStatus(msg) {
+      statusEl.textContent = msg || "";
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderInfo(props, extra) {
+      const name = props?.name ?? props?.display_name ?? "Area";
+      const phone = props?.phone;
+      const email = props?.email;
+      const hours = props?.hours;
+      const link  = props?.link;
+      const notes = props?.notes;
+
+      infoEl.innerHTML = `
+        <div class="title">${escapeHtml(name)}</div>
+        ${phone ? `<div class="kv"><b>Phone:</b> ${escapeHtml(phone)}</div>` : ""}
+        ${email ? `<div class="kv"><b>Email:</b> <a href="mailto:${encodeURIComponent(email)}">${escapeHtml(email)}</a></div>` : ""}
+        ${hours ? `<div class="kv"><b>Hours:</b> ${escapeHtml(hours)}</div>` : ""}
+        ${link  ? `<div class="kv"><a href="${escapeHtml(link)}" target="_blank" rel="noopener">More info</a></div>` : ""}
+        ${notes ? `<div class="kv">${escapeHtml(notes)}</div>` : ""}
+        ${extra ? `<div class="small" style="margin-top:10px;">${escapeHtml(extra)}</div>` : ""}
+      `;
+    }
+
+    function clearSelection() {
+      if (selectedLayer) selectedLayer.setStyle(STYLE_DEFAULT);
+      selectedLayer = null;
+    }
+
+    function setSelected(layer) {
+      if (selectedLayer && selectedLayer !== layer) {
+        selectedLayer.setStyle(STYLE_DEFAULT);
+      }
+      selectedLayer = layer;
+      selectedLayer.setStyle(STYLE_SELECTED);
+      selectedLayer.bringToFront();
+
+      renderInfo(layer.feature?.properties || {});
+    }
+
+    function styleFn() {
+      return STYLE_DEFAULT;
+    }
+
+    function onEachFeature(feature, layer) {
+      layer.on("mouseover", () => {
+        if (layer !== selectedLayer) layer.setStyle(STYLE_HOVER);
       });
+      layer.on("mouseout", () => {
+        if (layer !== selectedLayer) layer.setStyle(STYLE_DEFAULT);
+      });
+      layer.on("click", () => setSelected(layer));
+    }
+
+    // ===== Geocoding =====
+    async function geocodeAddress(q) {
+      // Nominatim public endpoint is for light usage; keep requests low and only on submit.
+      const url = new URL("https://nominatim.openstreetmap.org/search");
+      url.searchParams.set("format", "json");
+      url.searchParams.set("limit", "1");
+      url.searchParams.set("q", q);
+
+      const resp = await fetch(url.toString(), { headers: { "Accept": "application/json" } });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Geocode failed (HTTP ${resp.status}): ${text.slice(0,200)}`);
+      }
+      const data = await resp.json();
+      if (!data?.length) return null;
+
+      return {
+        lat: Number(data[0].lat),
+        lon: Number(data[0].lon),
+        display: data[0].display_name
+      };
+    }
+
+    // ===== Spatial match =====
+    function findContainingFeature(lon, lat, geojson) {
+      const pt = turf.point([lon, lat]);
+
+      for (const f of geojson.features || []) {
+        if (turf.booleanPointInPolygon(pt, f)) return f;
+      }
+      return null;
+    }
+
+    function placeAddressMarker(lat, lon) {
+      if (addressMarker) map.removeLayer(addressMarker);
+      addressMarker = L.circleMarker([lat, lon], {
+        radius: 7,
+        weight: 2,
+        fillOpacity: 0.7
+      }).addTo(map);
+    }
+
+    function matchFeatureToLeafletLayer(matchFeature) {
+      // Prefer matching by stable id (areaId). If not present, fall back to name.
+      const matchId = matchFeature?.properties?.areaId;
+      const matchName = matchFeature?.properties?.name;
+
+      let found = null;
+      geoLayer.eachLayer(layer => {
+        const p = layer.feature?.properties || {};
+        if (matchId && p.areaId === matchId) found = layer;
+        else if (!matchId && matchName && p.name === matchName) found = layer;
+      });
+      return found;
+    }
+
+    // ===== Load regions =====
+    async function loadRegions() {
+      setStatus("Loading regions…");
+      const resp = await fetch(GEOJSON_URL);
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Failed to load regions.geojson (HTTP ${resp.status}). First 200 chars:\n${text.slice(0,200)}`);
+      }
+      regionsGeoJSON = await resp.json();
+
+      geoLayer = L.geoJSON(regionsGeoJSON, {
+        style: styleFn,
+        onEachFeature
+      }).addTo(map);
+
+      try {
+        map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] });
+      } catch (_) {
+        // If only one tiny polygon or invalid bounds, ignore.
+      }
+
+      setStatus("");
+    }
+
+    // ===== Wire up search =====
+    async function runSearch() {
+      const q = document.getElementById("addr").value.trim();
+      if (!q) return;
+
+      setStatus("Searching address…");
+      infoEl.innerHTML = `<div class="small">Searching…</div>`;
+
+      try {
+        const hit = await geocodeAddress(q);
+        if (!hit) {
+          setStatus("");
+          infoEl.innerHTML = `<div class="small">No matching address found.</div>`;
+          return;
+        }
+
+        placeAddressMarker(hit.lat, hit.lon);
+
+        const match = findContainingFeature(hit.lon, hit.lat, regionsGeoJSON);
+        if (!match) {
+          clearSelection();
+          setStatus("");
+          renderInfo({ name: "Outside service area" }, hit.display);
+          map.setView([hit.lat, hit.lon], 14);
+          return;
+        }
+
+        const leafletLayer = matchFeatureToLeafletLayer(match);
+        if (leafletLayer) {
+          setSelected(leafletLayer);
+          map.fitBounds(leafletLayer.getBounds(), { padding: [20, 20] });
+          setStatus("");
+          return;
+        }
+
+        // Fallback: if we couldn't map back to a Leaflet layer, still show info.
+        setStatus("");
+        renderInfo(match.properties || {}, hit.display);
+        map.setView([hit.lat, hit.lon], 14);
+
+      } catch (e) {
+        console.error(e);
+        setStatus("");
+        infoEl.innerHTML = `<div class="small">Address lookup failed. Try again later.</div>`;
+      }
+    }
+
+    document.getElementById("go").addEventListener("click", runSearch);
+    document.getElementById("addr").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") runSearch();
+    });
+
+    // ===== Boot =====
+    loadRegions().catch(err => {
+      console.error(err);
+      alert(err.message);
+      setStatus("");
+    });
   </script>
 </body>
 </html>
