@@ -109,13 +109,43 @@
     .small {
       font-size: 12px;
       color: var(--muted);
+      line-height: 1.35;
     }
 
     .status {
       font-size: 13px;
       color: var(--muted);
       margin-top: 10px;
+      white-space: pre-wrap;
     }
+
+    /* Tooltip styling for hover labels */
+    .zone-tooltip {
+      background: rgba(17, 24, 39, 0.9);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 500;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+    }
+    .leaflet-tooltip-top:before,
+    .leaflet-tooltip-bottom:before,
+    .leaflet-tooltip-left:before,
+    .leaflet-tooltip-right:before {
+      border: none !important;
+    }
+
+    .zone-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: rgba(17, 24, 39, 0.90);
+      text-shadow: 0 1px 2px rgba(255,255,255,0.9);
+      pointer-events: none;  /* don't block clicks on polygons */
+      white-space: nowrap;
+    }
+
 
     @media (max-width: 900px) {
       #wrap {
@@ -145,7 +175,7 @@
       </div>
 
       <div class="hint">
-        Tip: include the city/state. If you’re in East Grand Forks, add “MN”.
+        Tip: include city/state. If you’re in East Grand Forks, add “MN”.
       </div>
 
       <h2 id="sectionTitle">Zone</h2>
@@ -172,14 +202,19 @@
   <script src="https://unpkg.com/@turf/turf@6/turf.min.js"></script>
 
   <script>
+    // ===== Config =====
     const GEOJSON_URL = "./regions.geojson";
-    const DEFAULT_VIEW = { lat: 47.91, lon: -97.03, zoom: 14 };
 
+    // Center between Grand Forks + East Grand Forks
+    const DEFAULT_VIEW = { lat: 47.93, lon: -97.03, zoom: 12 };
+
+    // ===== State =====
     let geoLayer = null;
     let regionsGeoJSON = null;
     let selectedLayer = null;
     let addressMarker = null;
 
+    // ===== Map init =====
     const map = L.map("map").setView(
       [DEFAULT_VIEW.lat, DEFAULT_VIEW.lon],
       DEFAULT_VIEW.zoom
@@ -190,60 +225,10 @@
       attribution: "&copy; OpenStreetMap contributors"
     }).addTo(map);
 
+    // ===== UI elements =====
     const infoEl = document.getElementById("info");
     const statusEl = document.getElementById("status");
     const sectionTitleEl = document.getElementById("sectionTitle");
-
-    function hashToColor(str) {
-    // Simple deterministic hash → HSL color
-      let hash = 0;
-      for (let i = 0; i < str.length; i++) {
-        hash = str.charCodeAt(i) + ((hash << 5) - hash);
-        }
-      
-        const hue = Math.abs(hash) % 360;
-        return `hsl(${hue}, 65%, 55%)`;
-    }
-
-    function getFeatureColor(feature) {
-      // Prefer a stable ID; fall back to name
-      const key =
-        feature?.properties?.areaId ||
-        feature?.properties?.name ||
-        "default";
-    
-      return hashToColor(key);
-    }
-
-    function baseStyle(feature) {
-      const color = getFeatureColor(feature);
-      return {
-        color,           // border
-        fillColor: color,
-        weight: 2,
-        fillOpacity: 0.25
-      };
-    }
-    
-    function hoverStyle(feature) {
-      const color = getFeatureColor(feature);
-      return {
-        color,
-        fillColor: color,
-        weight: 3,
-        fillOpacity: 0.35
-      };
-    }
-    
-    function selectedStyle(feature) {
-      const color = getFeatureColor(feature);
-      return {
-        color,
-        fillColor: color,
-        weight: 4,
-        fillOpacity: 0.50
-      };
-    }
 
     function setStatus(msg) {
       statusEl.textContent = msg || "";
@@ -263,7 +248,7 @@
     }
 
     function renderInfo(props, extra) {
-      const name  = props?.name ?? "Area";
+      const name  = props?.name ?? props?.areaId ?? "Area";
       const phone = props?.phone;
       const email = props?.email;
       const hours = props?.hours;
@@ -281,65 +266,110 @@
       `;
     }
 
+    // ===== Labels & styling (color comes from GeoJSON properties.color) =====
+    function getFeatureLabel(feature) {
+      return feature?.properties?.name || feature?.properties?.areaId || "Area";
+    }
+
+    function getFeatureColor(feature) {
+      // Expect hex like #2563EB, but any valid CSS color string works.
+      return feature?.properties?.color || "#6b7280"; // fallback gray
+    }
+
+    const ZONE_FILL = "#2563EB";
+    const ZONE_BORDER = "#00008B";
+
+    function baseStyle() {
+      return {
+        color: ZONE_BORDER,
+        fillColor: ZONE_FILL,
+        weight: 2,
+        opacity: 0.9,
+        fillOpacity: 0.25
+      };
+    }
+
+    function hoverStyle() {
+      return {
+        color: ZONE_BORDER,
+        fillColor: ZONE_FILL,
+        weight: 3,
+        opacity: 1,
+        fillOpacity: 0.35
+      };
+    }
+
+    function selectedStyle() {
+      return {
+        color: "#000000",
+        fillColor: ZONE_FILL,
+        weight: 4,
+        opacity: 1,
+        fillOpacity: 0.50
+      };
+    }
+
+
     function clearSelection() {
       if (selectedLayer) {
-        selectedLayer.setStyle(baseStyle(selectedLayer.feature));
+        selectedLayer.setStyle(baseStyle());
       }
       selectedLayer = null;
-      setSectionTitle("Contact");
+      setSectionTitle("Zone");
     }
 
 
     function setSelected(layer) {
       if (selectedLayer && selectedLayer !== layer) {
-        selectedLayer.setStyle(baseStyle(selectedLayer.feature));
+        selectedLayer.setStyle(baseStyle());
       }
-    
+
       selectedLayer = layer;
-      selectedLayer.setStyle(selectedStyle(layer.feature));
+      selectedLayer.setStyle(selectedStyle());
       selectedLayer.bringToFront();
-    
+
       const props = layer.feature?.properties || {};
-      setSectionTitle(props.name);
+      setSectionTitle(props.name || props.areaId || "Zone");
       renderInfo(props);
     }
 
 
-    function styleFn() {
-      return STYLE_DEFAULT;
-    }
-
     function onEachFeature(feature, layer) {
-      layer.setStyle(baseStyle(feature));
-    
+      layer.setStyle(baseStyle());
+
+      layer.bindTooltip(getFeatureLabel(feature), {
+        sticky: true,
+        direction: "auto",
+        opacity: 0.9,
+        className: "zone-tooltip"
+      });
+
       layer.on("mouseover", () => {
-        if (layer !== selectedLayer) {
-          layer.setStyle(hoverStyle(feature));
-        }
+        if (layer !== selectedLayer) layer.setStyle(hoverStyle());
+        layer.openTooltip();
       });
-    
+
       layer.on("mouseout", () => {
-        if (layer !== selectedLayer) {
-          layer.setStyle(baseStyle(feature));
-        }
+        if (layer !== selectedLayer) layer.setStyle(baseStyle());
+        layer.closeTooltip();
       });
-    
+
       layer.on("click", () => setSelected(layer));
     }
 
 
+    // ===== Geocoding =====
     async function geocodeAddress(q) {
       const url = new URL("https://nominatim.openstreetmap.org/search");
       url.searchParams.set("format", "json");
       url.searchParams.set("limit", "1");
       url.searchParams.set("q", q);
 
-      const resp = await fetch(url.toString(), {
-        headers: { "Accept": "application/json" }
-      });
+      const resp = await fetch(url.toString(), { headers: { "Accept": "application/json" } });
 
       if (!resp.ok) {
-        throw new Error("Geocoding failed");
+        const text = await resp.text();
+        throw new Error(`Geocoding failed (HTTP ${resp.status}). ${text.slice(0,200)}`);
       }
 
       const data = await resp.json();
@@ -352,6 +382,7 @@
       };
     }
 
+    // ===== Spatial match =====
     function findContainingFeature(lon, lat, geojson) {
       const pt = turf.point([lon, lat]);
       for (const f of geojson.features || []) {
@@ -371,30 +402,44 @@
 
     function matchFeatureToLeafletLayer(matchFeature) {
       const matchId = matchFeature?.properties?.areaId;
-      let found = null;
+      if (!matchId) return null;
 
+      let found = null;
       geoLayer.eachLayer(layer => {
         const p = layer.feature?.properties || {};
-        if (matchId && p.areaId === matchId) found = layer;
+        if (p.areaId === matchId) found = layer;
       });
-
       return found;
     }
 
+    // ===== Load regions =====
     async function loadRegions() {
       setStatus("Loading regions…");
+
       const resp = await fetch(GEOJSON_URL);
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Failed to load ${GEOJSON_URL} (HTTP ${resp.status}). First 200 chars:\n${text.slice(0,200)}`);
+      }
+
       regionsGeoJSON = await resp.json();
 
-      geoLayer = L.geoJSON(regionsGeoJSON, {
-        onEachFeature
-      }).addTo(map);
+      // Basic sanity checks to avoid silent failure
+      if (!regionsGeoJSON || regionsGeoJSON.type !== "FeatureCollection") {
+        throw new Error(`regions.geojson must be a GeoJSON FeatureCollection. Got: ${regionsGeoJSON?.type}`);
+      }
 
+      geoLayer = L.geoJSON(regionsGeoJSON, { onEachFeature }).addTo(map);
 
-      map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] });
+      // Fit to regions if possible
+      try {
+        map.fitBounds(geoLayer.getBounds(), { padding: [20, 20] });
+      } catch (_) {}
+
       setStatus("");
     }
 
+    // ===== Address search =====
     async function runSearch() {
       const q = document.getElementById("addr").value.trim();
       if (!q) return;
@@ -405,8 +450,8 @@
       try {
         const hit = await geocodeAddress(q);
         if (!hit) {
-          infoEl.innerHTML = `<div class="small">No matching address found.</div>`;
           setStatus("");
+          infoEl.innerHTML = `<div class="small">No matching address found.</div>`;
           return;
         }
 
@@ -422,17 +467,23 @@
           return;
         }
 
+        // Prefer selecting the actual Leaflet layer for proper styling + bounds
         const leafletLayer = matchFeatureToLeafletLayer(match);
         if (leafletLayer) {
           setSelected(leafletLayer);
           map.fitBounds(leafletLayer.getBounds(), { padding: [20, 20] });
+        } else {
+          // Fallback: show info even if we can't map to a layer (e.g., missing areaId)
+          setSectionTitle(match.properties?.name || match.properties?.areaId || "Zone");
+          renderInfo(match.properties || {}, hit.display);
+          map.setView([hit.lat, hit.lon], 14);
         }
 
         setStatus("");
       } catch (e) {
         console.error(e);
-        infoEl.innerHTML = `<div class="small">Address lookup failed.</div>`;
         setStatus("");
+        infoEl.innerHTML = `<div class="small">Address lookup failed.</div>`;
       }
     }
 
@@ -441,7 +492,12 @@
       if (e.key === "Enter") runSearch();
     });
 
-    loadRegions();
+    // ===== Boot =====
+    loadRegions().catch(err => {
+      console.error(err);
+      setStatus("ERROR:\n" + err.message);
+      alert(err.message);
+    });
   </script>
 </body>
 </html>
