@@ -178,13 +178,13 @@
         Tip: include city/state. If you’re in East Grand Forks, add “MN”.
       </div>
 
-      <h2 id="sectionTitle">Zone</h2>
-
       <div id="info" class="card">
-        <div class="small">
+        <div class="title">Zone</div>
+        <div id="infoBody" class="small">
           Hover or click a region on the map, or search an address.
         </div>
       </div>
+
 
       <div id="status" class="status"></div>
 
@@ -220,6 +220,10 @@
       DEFAULT_VIEW.zoom
     );
 
+    map.createPane("addressPane");
+    map.getPane("addressPane").style.zIndex = 650; // higher than overlays (default ~400)
+
+
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: "&copy; OpenStreetMap contributors"
@@ -228,14 +232,10 @@
     // ===== UI elements =====
     const infoEl = document.getElementById("info");
     const statusEl = document.getElementById("status");
-    const sectionTitleEl = document.getElementById("sectionTitle");
+    const infoBodyEl = document.getElementById("infoBody");
 
     function setStatus(msg) {
       statusEl.textContent = msg || "";
-    }
-
-    function setSectionTitle(text) {
-      sectionTitleEl.textContent = text || "Zone";
     }
 
     function escapeHtml(s) {
@@ -248,16 +248,17 @@
     }
 
     function renderInfo(props, extra) {
-      const name  = props?.name ?? props?.areaId ?? "Area";
+      const name  = props?.name ?? props?.areaId ?? "Unknown zone";
       const phone = props?.phone;
       const email = props?.email;
       const hours = props?.hours;
       const link  = props?.link;
       const notes = props?.notes;
-      const state = props?.state;
 
-      infoEl.innerHTML = `
-        <div class="title">${escapeHtml(name)}</div>
+      infoBodyEl.className = "";
+
+      infoBodyEl.innerHTML = `
+        <div class="kv"><b>${escapeHtml(name)}</b></div>
         ${phone ? `<div class="kv"><b>Phone:</b> ${escapeHtml(phone)}</div>` : ""}
         ${email ? `<div class="kv"><b>Email:</b> <a href="mailto:${encodeURIComponent(email)}">${escapeHtml(email)}</a></div>` : ""}
         ${hours ? `<div class="kv"><b>Hours:</b> ${escapeHtml(hours)}</div>` : ""}
@@ -266,6 +267,8 @@
         ${extra ? `<div class="small" style="margin-top:10px;">${escapeHtml(extra)}</div>` : ""}
       `;
     }
+
+
 
     // ===== Labels & styling (color comes from GeoJSON properties.color) =====
     function getFeatureLabel(feature) {
@@ -327,8 +330,11 @@
         selectedLayer.setStyle(baseStyle(selectedLayer.feature));
       }
       selectedLayer = null;
-      setSectionTitle("Zone");
+
+      infoBodyEl.className = "small";
+      infoBodyEl.textContent = "Hover or click a region on the map, or search an address.";
     }
+
 
     function setSelected(layer) {
       if (selectedLayer && selectedLayer !== layer) {
@@ -340,9 +346,9 @@
       selectedLayer.bringToFront();
 
       const props = layer.feature?.properties || {};
-      setSectionTitle(props.name || props.areaId || "Zone");
       renderInfo(props);
     }
+
 
     function onEachFeature(feature, layer) {
       layer.setStyle(baseStyle(feature));
@@ -404,12 +410,19 @@
 
     function placeAddressMarker(lat, lon) {
       if (addressMarker) map.removeLayer(addressMarker);
+
       addressMarker = L.circleMarker([lat, lon], {
-        radius: 7,
-        weight: 2,
-        fillOpacity: 0.7
+        pane: "addressPane",   
+        radius: 8,
+        color: "#000000",
+        weight: 3,
+        opacity: 1,
+        fillColor: "#FF0000",
+        fillOpacity: 1
       }).addTo(map);
     }
+
+
 
     function matchFeatureToLeafletLayer(matchFeature) {
       const matchId = matchFeature?.properties?.areaId;
@@ -456,22 +469,25 @@
       if (!q) return;
 
       setStatus("Searching address…");
-      infoEl.innerHTML = `<div class="small">Searching…</div>`;
+      infoBodyEl.className = "small";
+      infoBodyEl.textContent = "Searching…";
 
       try {
         const hit = await geocodeAddress(q);
         if (!hit) {
           setStatus("");
-          infoEl.innerHTML = `<div class="small">No matching address found.</div>`;
+          infoBodyEl.textContent = "No matching address found.";
           return;
         }
 
+        // Always show marker once geocoding succeeds
         placeAddressMarker(hit.lat, hit.lon);
+        addressMarker.bindPopup(`📍 ${escapeHtml(hit.display)}`).openPopup();
+        map.setView([hit.lat, hit.lon], Math.max(map.getZoom(), 14));
 
         const match = findContainingFeature(hit.lon, hit.lat, regionsGeoJSON);
         if (!match) {
           clearSelection();
-          setSectionTitle("Outside service area");
           renderInfo({ name: "Outside service area" }, hit.display);
           map.setView([hit.lat, hit.lon], 14);
           setStatus("");
@@ -485,7 +501,6 @@
           map.fitBounds(leafletLayer.getBounds(), { padding: [20, 20] });
         } else {
           // Fallback: show info even if we can't map to a layer (e.g., missing areaId)
-          setSectionTitle(match.properties?.name || match.properties?.areaId || "Zone");
           renderInfo(match.properties || {}, hit.display);
           map.setView([hit.lat, hit.lon], 14);
         }
@@ -494,7 +509,7 @@
       } catch (e) {
         console.error(e);
         setStatus("");
-        infoEl.innerHTML = `<div class="small">Address lookup failed.</div>`;
+        infoBodyEl.textContent = "Address lookup failed.";
       }
     }
 
