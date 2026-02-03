@@ -254,6 +254,7 @@
       const hours = props?.hours;
       const link  = props?.link;
       const notes = props?.notes;
+      const state = props?.state;
 
       infoEl.innerHTML = `
         <div class="title">${escapeHtml(name)}</div>
@@ -276,56 +277,66 @@
       return feature?.properties?.color || "#6b7280"; // fallback gray
     }
 
-    const ZONE_FILL = "#2563EB";
-    const ZONE_BORDER = "#00008B";
+    const STATE_TO_FILL = {
+      MN: "#2563EB", // blue
+      ND: "#16A34A"  // green
+    };
 
-    function baseStyle() {
+    const ZONE_BORDER = "#111827";
+
+    function getZoneFill(feature) {
+      const t = feature?.properties?.state;
+      return STATE_TO_FILL[t] || STATE_TO_FILL.A; // default A
+    }
+
+    function baseStyle(feature) {
+      const fill = getZoneFill(feature);
       return {
         color: ZONE_BORDER,
-        fillColor: ZONE_FILL,
+        fillColor: fill,
         weight: 2,
         opacity: 0.9,
         fillOpacity: 0.25
       };
     }
 
-    function hoverStyle() {
+    function hoverStyle(feature) {
+      const fill = getZoneFill(feature);
       return {
         color: ZONE_BORDER,
-        fillColor: ZONE_FILL,
+        fillColor: fill,
         weight: 3,
         opacity: 1,
         fillOpacity: 0.35
       };
     }
 
-    function selectedStyle() {
+    function selectedStyle(feature) {
+      const fill = getZoneFill(feature);
       return {
         color: "#000000",
-        fillColor: ZONE_FILL,
+        fillColor: fill,
         weight: 4,
         opacity: 1,
         fillOpacity: 0.50
       };
     }
 
-
     function clearSelection() {
       if (selectedLayer) {
-        selectedLayer.setStyle(baseStyle());
+        selectedLayer.setStyle(baseStyle(selectedLayer.feature));
       }
       selectedLayer = null;
       setSectionTitle("Zone");
     }
 
-
     function setSelected(layer) {
       if (selectedLayer && selectedLayer !== layer) {
-        selectedLayer.setStyle(baseStyle());
+        selectedLayer.setStyle(baseStyle(selectedLayer.feature));
       }
 
       selectedLayer = layer;
-      selectedLayer.setStyle(selectedStyle());
+      selectedLayer.setStyle(selectedStyle(layer.feature));
       selectedLayer.bringToFront();
 
       const props = layer.feature?.properties || {};
@@ -333,9 +344,8 @@
       renderInfo(props);
     }
 
-
     function onEachFeature(feature, layer) {
-      layer.setStyle(baseStyle());
+      layer.setStyle(baseStyle(feature));
 
       layer.bindTooltip(getFeatureLabel(feature), {
         sticky: true,
@@ -345,17 +355,18 @@
       });
 
       layer.on("mouseover", () => {
-        if (layer !== selectedLayer) layer.setStyle(hoverStyle());
+        if (layer !== selectedLayer) layer.setStyle(hoverStyle(feature));
         layer.openTooltip();
       });
 
       layer.on("mouseout", () => {
-        if (layer !== selectedLayer) layer.setStyle(baseStyle());
+        if (layer !== selectedLayer) layer.setStyle(baseStyle(feature));
         layer.closeTooltip();
       });
 
       layer.on("click", () => setSelected(layer));
     }
+
 
 
     // ===== Geocoding =====
